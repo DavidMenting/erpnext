@@ -54,7 +54,7 @@ erpnext.accounts.bank_reconciliation.DataTableManager = class DataTableManager {
 			{
 				name: __("Description"),
 				editable: false,
-				width: 350,
+				width: 345,
 			},
 			{
 				name: __("Deposit"),
