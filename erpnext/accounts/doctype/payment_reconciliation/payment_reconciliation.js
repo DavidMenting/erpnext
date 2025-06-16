@@ -182,8 +182,9 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 							this.frm.set_value("receivable_payable_account", r.message[0]);
 							this.frm.set_value("default_advance_account", r.message[1]);
 						}
+					} else {
+						this.frm.refresh();
 					}
-					this.frm.refresh();
 				},
 			});
 		}
@@ -191,7 +192,11 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 
 	receivable_payable_account() {
 		this.frm.trigger("clear_child_tables");
-		this.frm.refresh();
+		if (this.frm.doc.receivable_payable_account) {
+			this.frm.trigger("get_unreconciled_entries");
+		} else {
+			this.frm.refresh();
+		}
 	}
 
 	invoice_name() {
