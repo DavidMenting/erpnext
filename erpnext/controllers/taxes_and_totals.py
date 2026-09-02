@@ -309,6 +309,11 @@ class calculate_taxes_and_totals:
 		if not any(cint(tax.included_in_print_rate) for tax in self.doc.get("taxes")):
 			return
 
+		# Error diffusion: the residual lost when each row's net amount is rounded is carried
+		# over to the next row, so the rounded net amounts always sum to `net_total`.
+		expected_net_total = 0.0
+		net_total = 0.0
+
 		for item in self.doc.items:
 			item._unrounded_net_amount = None
 			item_tax_map = self._load_item_tax_rate(item.item_tax_rate)
@@ -338,7 +343,16 @@ class calculate_taxes_and_totals:
 				amount = flt(item.amount) - total_tax_intercept
 
 				item._unrounded_net_amount = amount / (1 + total_tax_slope)
+				expected_net_total += item._unrounded_net_amount
+
 				item.net_amount = flt(item._unrounded_net_amount, item.precision("net_amount"))
+				net_total += item.net_amount
+
+				rounded_net_total = flt(expected_net_total, self.doc.precision("net_total"))
+				if rounding_difference := flt(rounded_net_total - net_total, item.precision("net_amount")):
+					item.net_amount = flt(item.net_amount + rounding_difference, item.precision("net_amount"))
+					net_total += rounding_difference
+
 				item.net_rate = flt(item.net_amount / item.qty, item.precision("net_rate"))
 				item.discount_percentage = flt(
 					item.discount_percentage, item.precision("discount_percentage")

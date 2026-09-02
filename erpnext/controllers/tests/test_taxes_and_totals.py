@@ -158,3 +158,69 @@ class TestTaxesAndTotals(ERPNextTestSuite):
 		self.assertEqual(so.rounding_adjustment, 0)
 		self.assertEqual(so.base_rounded_total, 0)
 		self.assertEqual(so.base_rounding_adjustment, 0)
+
+	def make_inclusive_tax_order(self, lines, rate=21):
+		so = make_sales_order(do_not_save=True)
+		so.items = []
+		for qty, item_rate in lines:
+			so.append(
+				"items",
+				{
+					"item_code": "_Test Item",
+					"qty": qty,
+					"rate": item_rate,
+					"price_list_rate": item_rate,
+					"warehouse": "_Test Warehouse - _TC",
+				},
+			)
+
+		so.set("taxes", [])
+		so.append(
+			"taxes",
+			{
+				"charge_type": "On Net Total",
+				"account_head": "_Test Account VAT - _TC",
+				"description": f"VAT {rate}% inclusive",
+				"rate": rate,
+				"included_in_print_rate": 1,
+				"cost_center": "_Test Cost Center - _TC",
+			},
+		)
+
+		calculate_taxes_and_totals(so)
+		return so
+
+	def test_inclusive_tax_net_total_adds_up_to_grand_total(self):
+		"""The residual lost when each row's net amount is rounded must be diffused across
+		the rows. 2 x 379 @ 21% inclusive: net 758 / 1.21 = 626.4463 -> 626.45, VAT 131.55.
+		Rounding each row on its own gives 313.22 + 313.22 = 626.44, one cent short."""
+		so = self.make_inclusive_tax_order([(1, 379), (1, 379)])
+
+		self.assertEqual([item.net_amount for item in so.items], [313.22, 313.23])
+		self.assertEqual(so.total, 758.0)
+		self.assertEqual(so.net_total, 626.45)
+		self.assertEqual(so.taxes[0].tax_amount, 131.55)
+		self.assertEqual(so.taxes[0].total, 758.0)
+		self.assertEqual(so.grand_total, 758.0)
+		self.assertEqual(flt(so.net_total + so.total_taxes_and_charges, 2), so.grand_total)
+
+	def test_inclusive_tax_totals_dont_depend_on_line_split(self):
+		"""One line of qty 2 and two lines of qty 1 must produce the same totals."""
+		single = self.make_inclusive_tax_order([(2, 379)])
+		split = self.make_inclusive_tax_order([(1, 379), (1, 379)])
+
+		self.assertEqual(single.net_total, split.net_total)
+		self.assertEqual(single.taxes[0].tax_amount, split.taxes[0].tax_amount)
+		self.assertEqual(single.grand_total, split.grand_total)
+
+	def test_inclusive_tax_residual_beyond_grand_total_diff_threshold(self):
+		"""`grand_total_diff` only compensates a residual up to 0.5 of the last decimal.
+		With 20 rows the residual reached 0.06, the compensation was dropped entirely and
+		the grand total came out at 7579.94 against a line total of 7580.00."""
+		so = self.make_inclusive_tax_order([(1, 379)] * 20)
+
+		self.assertEqual(so.total, 7580.0)
+		self.assertEqual(so.net_total, 6264.46)
+		self.assertEqual(so.taxes[0].tax_amount, 1315.54)
+		self.assertEqual(so.grand_total, 7580.0)
+		self.assertEqual(flt(so.net_total + so.total_taxes_and_charges, 2), so.grand_total)
