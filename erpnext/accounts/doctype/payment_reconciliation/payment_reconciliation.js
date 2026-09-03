@@ -112,11 +112,14 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 
 		// check for any running reconciliation jobs
 		if (this.frm.doc.receivable_payable_account) {
-			this.frm.call({
-				doc: this.frm.doc,
-				method: "is_auto_process_enabled",
-				callback: (r) => {
-					if (r.message) {
+			// Read the setting directly instead of via a document method. Document
+			// methods round-trip the whole doc and `run_doc_method` returns it in the
+			// response, which the client syncs back into locals -- so a call made
+			// while the child tables are empty can land after a fetch and wipe it.
+			frappe.db
+				.get_single_value("Accounts Settings", "auto_reconcile_payments")
+				.then((auto_process_enabled) => {
+					if (auto_process_enabled) {
 						this.frm
 							.call({
 								method: "erpnext.accounts.doctype.process_payment_reconciliation.process_payment_reconciliation.is_any_doc_running",
@@ -144,8 +147,7 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 								}
 							});
 					}
-				},
-			});
+				});
 		}
 	}
 	set_query_for_dimension_filters() {
@@ -190,19 +192,21 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 					party: this.frm.doc.party,
 					include_advance: 1,
 				},
-				callback: (r) => {
+				callback: async (r) => {
 					if (!r.exc && r.message) {
 						if (typeof r.message === "string") {
-							this.frm.set_value("receivable_payable_account", r.message);
+							await this.frm.set_value("receivable_payable_account", r.message);
 						} else if (Array.isArray(r.message)) {
-							this.frm.set_value("receivable_payable_account", r.message[0]);
-							this.frm.set_value("default_advance_account", r.message[1]);
+							await this.frm.set_value("receivable_payable_account", r.message[0]);
+							await this.frm.set_value("default_advance_account", r.message[1]);
 						}
 					}
 					this.frm.refresh();
 
 					// Fetch here rather than from receivable_payable_account(), so that
-					// default_advance_account is set before the entries are queried.
+					// default_advance_account is set before the entries are queried. The
+					// set_value calls above are awaited so that the clear_child_tables()
+					// queued by receivable_payable_account() has run first.
 					if (this.frm.doc.receivable_payable_account) {
 						this.frm.trigger("get_unreconciled_entries");
 					}
