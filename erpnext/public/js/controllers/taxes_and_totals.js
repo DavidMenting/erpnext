@@ -280,6 +280,11 @@ erpnext.taxes_and_totals = class TaxesAndTotals extends erpnext.payments {
 		});
 		if (has_inclusive_tax == false) return;
 
+		// Error diffusion: the residual lost when each row's net amount is rounded is carried
+		// over to the next row, so the rounded net amounts always sum to `net_total`.
+		var expected_net_total = 0.0;
+		var net_total = 0.0;
+
 		$.each(this.frm.doc.items || [], function (n, item) {
 			item._unrounded_net_amount = null;
 			var item_tax_map = me._load_item_tax_rate(item.item_tax_rate);
@@ -309,7 +314,21 @@ erpnext.taxes_and_totals = class TaxesAndTotals extends erpnext.payments {
 			if (!me.discount_amount_applied && item.qty && (total_tax_intercept || total_tax_slope)) {
 				var amount = flt(item.amount) - total_tax_intercept;
 				item._unrounded_net_amount = amount / (1 + total_tax_slope);
+				expected_net_total += item._unrounded_net_amount;
+
 				item.net_amount = flt(item._unrounded_net_amount, precision("net_amount", item));
+				net_total += item.net_amount;
+
+				var rounded_net_total = flt(expected_net_total, precision("net_total", me.frm.doc));
+				var rounding_difference = flt(rounded_net_total - net_total, precision("net_amount", item));
+				if (rounding_difference) {
+					item.net_amount = flt(
+						item.net_amount + rounding_difference,
+						precision("net_amount", item)
+					);
+					net_total += rounding_difference;
+				}
+
 				item.net_rate = item.qty ? flt(item.net_amount / item.qty, precision("net_rate", item)) : 0;
 
 				me.set_in_company_currency(item, ["net_rate", "net_amount"]);
