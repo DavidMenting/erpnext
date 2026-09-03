@@ -584,6 +584,10 @@ HEADER_KEYWORDS = [
 	"balance",
 ]
 
+# Header aliases per standard column variable, used to auto-detect the column mapping.
+# Matching is substring based and the first hit wins, so order matters: more specific
+# variables must come before the ones with broader aliases. Every key must also exist in
+# FIELD_MAP below, otherwise a detected column can never be written to a transaction.
 STANDARD_VARIABLES = {
 	"Date": ["date", "transaction date"],
 	"Debit/Credit": [
@@ -601,6 +605,28 @@ STANDARD_VARIABLES = {
 	"Description": ["description", "particulars", "remarks", "narration", "detail", "reference"],
 	"Reference": ["reference", "ref", "tran id", "transaction id", "cheque", "check", "id", "chq"],
 	"Balance": ["balance"],
+	"Included Fee": ["included fee", "fee included"],
+	"Excluded Fee": ["excluded fee", "fee excluded"],
+	# The party variants are matched before the generic name, so that a header like
+	# "Counterparty Account Number" resolves to the account number and not to the name.
+	"Party IBAN": ["party iban", "counterparty iban", "counter party iban", "beneficiary iban", "iban"],
+	"Party Account No.": [
+		"party account no",
+		"party account number",
+		"counterparty account",
+		"counter party account",
+		"beneficiary account",
+	],
+	"Party Name/Account Holder": [
+		"party name",
+		"account holder",
+		"counterparty name",
+		"counter party name",
+		"beneficiary name",
+		"counterparty",
+		"counter party",
+		"beneficiary",
+	],
 }
 
 # Map of standard column variable -> transaction row field
