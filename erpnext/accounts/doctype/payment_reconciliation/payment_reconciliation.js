@@ -200,6 +200,12 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 						}
 					}
 					this.frm.refresh();
+
+					// Fetch here rather than from receivable_payable_account(), so that
+					// default_advance_account is set before the entries are queried.
+					if (this.frm.doc.receivable_payable_account) {
+						this.frm.trigger("get_unreconciled_entries");
+					}
 				},
 			});
 		}
@@ -231,14 +237,16 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 			doc: this.frm.doc,
 			method: "get_unreconciled_entries",
 			callback: () => {
+				let message = null;
 				if (!(this.frm.doc.payments.length || this.frm.doc.invoices.length)) {
-					frappe.throw({
-						message: __("No Unreconciled Invoices and Payments found for this party and account"),
-					});
+					message = __("No Unreconciled Invoices and Payments found for this party and account");
 				} else if (!this.frm.doc.invoices.length) {
-					frappe.throw({ message: __("No Outstanding Invoices found for this party") });
+					message = __("No Outstanding Invoices found for this party");
 				} else if (!this.frm.doc.payments.length) {
-					frappe.throw({ message: __("No Unreconciled Payments found for this party") });
+					message = __("No Unreconciled Payments found for this party");
+				}
+				if (message) {
+					frappe.show_alert({ message: message, indicator: "orange" }, 5);
 				}
 				this.frm.refresh();
 			},
