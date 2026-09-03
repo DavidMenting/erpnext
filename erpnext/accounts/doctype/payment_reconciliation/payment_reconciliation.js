@@ -7,11 +7,16 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 ) {
 	onload() {
 		const default_company = frappe.defaults.get_default("company");
-		this.frm.set_value("company", default_company);
 
-		this.frm.set_value("party_type", "");
-		this.frm.set_value("party", "");
-		this.frm.set_value("receivable_payable_account", "");
+		// Serialised so that the field triggers run in a known order -- company()
+		// clears the party and the account, so anything applied afterwards (see
+		// apply_route_options) has to wait for this chain to settle first.
+		this.defaults_set = frappe.run_serially([
+			() => this.frm.set_value("company", default_company),
+			() => this.frm.set_value("party_type", ""),
+			() => this.frm.set_value("party", ""),
+			() => this.frm.set_value("receivable_payable_account", ""),
+		]);
 
 		this.frm.set_query("party_type", () => {
 			return {
@@ -79,6 +84,39 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 		});
 	}
 
+	async apply_route_options() {
+		// Prefill the filters from the query string, so that other documents can
+		// link straight into a party's reconciliation:
+		//   /app/payment-reconciliation?party_type=Customer&party=CUST-0001
+		// This form is a Single, so frappe.model.get_new_doc() -- which is what
+		// applies route options everywhere else -- never runs for it.
+		const opts = frappe.route_options;
+		if (this.route_options_applied || !opts || !opts.party_type) {
+			return;
+		}
+		// Set the flag before the first await: refresh() runs many times over
+		// (each set_value below triggers one), and this should happen once.
+		this.route_options_applied = true;
+		frappe.route_options = null;
+
+		if (!Object.keys(frappe.boot.party_account_types).includes(opts.party_type)) {
+			return;
+		}
+
+		await this.defaults_set;
+
+		// Sequential, and in this order: company() clears the party and the
+		// account, party_type() clears the party, and party() fetches the accounts
+		// and then the unreconciled entries.
+		if (opts.company) {
+			await this.frm.set_value("company", opts.company);
+		}
+		await this.frm.set_value("party_type", opts.party_type);
+		if (opts.party) {
+			await this.frm.set_value("party", opts.party);
+		}
+	}
+
 	refresh() {
 		this.frm.disable_save();
 
@@ -112,11 +150,14 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 
 		// check for any running reconciliation jobs
 		if (this.frm.doc.receivable_payable_account) {
-			this.frm.call({
-				doc: this.frm.doc,
-				method: "is_auto_process_enabled",
-				callback: (r) => {
-					if (r.message) {
+			// Read the setting directly instead of via a document method. Document
+			// methods round-trip the whole doc and `run_doc_method` returns it in the
+			// response, which the client syncs back into locals -- so a call made
+			// while the child tables are empty can land after a fetch and wipe it.
+			frappe.db
+				.get_single_value("Accounts Settings", "auto_reconcile_payments")
+				.then((auto_process_enabled) => {
+					if (auto_process_enabled) {
 						this.frm
 							.call({
 								method: "erpnext.accounts.doctype.process_payment_reconciliation.process_payment_reconciliation.is_any_doc_running",
@@ -144,10 +185,12 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 								}
 							});
 					}
-				},
-			});
+				});
 		}
+
+		this.apply_route_options();
 	}
+
 	set_query_for_dimension_filters() {
 		frappe.call({
 			method: "erpnext.accounts.doctype.payment_reconciliation.payment_reconciliation.get_queries_for_dimension_filters",
@@ -190,16 +233,24 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 					party: this.frm.doc.party,
 					include_advance: 1,
 				},
-				callback: (r) => {
+				callback: async (r) => {
 					if (!r.exc && r.message) {
 						if (typeof r.message === "string") {
-							this.frm.set_value("receivable_payable_account", r.message);
+							await this.frm.set_value("receivable_payable_account", r.message);
 						} else if (Array.isArray(r.message)) {
-							this.frm.set_value("receivable_payable_account", r.message[0]);
-							this.frm.set_value("default_advance_account", r.message[1]);
+							await this.frm.set_value("receivable_payable_account", r.message[0]);
+							await this.frm.set_value("default_advance_account", r.message[1]);
 						}
 					}
 					this.frm.refresh();
+
+					// Fetch here rather than from receivable_payable_account(), so that
+					// default_advance_account is set before the entries are queried. The
+					// set_value calls above are awaited so that the clear_child_tables()
+					// queued by receivable_payable_account() has run first.
+					if (this.frm.doc.receivable_payable_account) {
+						this.frm.trigger("get_unreconciled_entries");
+					}
 				},
 			});
 		}
@@ -231,14 +282,16 @@ erpnext.accounts.PaymentReconciliationController = class PaymentReconciliationCo
 			doc: this.frm.doc,
 			method: "get_unreconciled_entries",
 			callback: () => {
+				let message = null;
 				if (!(this.frm.doc.payments.length || this.frm.doc.invoices.length)) {
-					frappe.throw({
-						message: __("No Unreconciled Invoices and Payments found for this party and account"),
-					});
+					message = __("No Unreconciled Invoices and Payments found for this party and account");
 				} else if (!this.frm.doc.invoices.length) {
-					frappe.throw({ message: __("No Outstanding Invoices found for this party") });
+					message = __("No Outstanding Invoices found for this party");
 				} else if (!this.frm.doc.payments.length) {
-					frappe.throw({ message: __("No Unreconciled Payments found for this party") });
+					message = __("No Unreconciled Payments found for this party");
+				}
+				if (message) {
+					frappe.show_alert({ message: message, indicator: "orange" }, 5);
 				}
 				this.frm.refresh();
 			},
