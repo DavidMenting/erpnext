@@ -6,6 +6,8 @@ from frappe import qb
 from frappe.utils import getdate
 
 from erpnext.accounts.doctype.bank_statement_import_log.bank_statement_import_log import (
+	FIELD_MAP,
+	STANDARD_VARIABLES,
 	BankStatementImportLog,
 	build_table_transactions,
 	detect_column_mapping,
@@ -211,6 +213,77 @@ class TestBankStatementImportLog(ERPNextTestSuite, AccountsTestMixin):
 		self.assertEqual(mapping.get("Date"), 0)
 		self.assertEqual(mapping.get("Description"), 1)
 		self.assertEqual(mapping.get("Amount"), 2)
+
+	def _detected_mapping(self, header_row: list[str]) -> dict:
+		return {
+			c["maps_to"]: c["index"]
+			for c in detect_column_mapping(header_row)
+			if c["maps_to"] != "Do not import"
+		}
+
+	def test_every_detectable_variable_maps_to_a_field(self):
+		"""A header can only be auto-detected as a variable that can also be written."""
+		self.assertEqual(set(STANDARD_VARIABLES) - set(FIELD_MAP), set())
+
+	def test_party_columns_are_detected(self):
+		"""Party columns are auto-mapped instead of being left on "Do not import"."""
+		mapping = self._detected_mapping(
+			[
+				"Date",
+				"Deposit",
+				"Withdrawal",
+				"Description",
+				"Reference Number",
+				"Party IBAN",
+				"Party Name/Account Holder",
+				"Party Account No.",
+			]
+		)
+		self.assertEqual(mapping.get("Date"), 0)
+		self.assertEqual(mapping.get("Deposit"), 1)
+		self.assertEqual(mapping.get("Withdrawal"), 2)
+		self.assertEqual(mapping.get("Description"), 3)
+		self.assertEqual(mapping.get("Reference"), 4)
+		self.assertEqual(mapping.get("Party IBAN"), 5)
+		self.assertEqual(mapping.get("Party Name/Account Holder"), 6)
+		self.assertEqual(mapping.get("Party Account No."), 7)
+
+	def test_party_column_aliases(self):
+		"""The counterparty/beneficiary spellings used by EU banks are detected too."""
+		mapping = self._detected_mapping(
+			["Counterparty IBAN", "Counterparty Account Number", "Beneficiary Name"]
+		)
+		self.assertEqual(mapping.get("Party IBAN"), 0)
+		self.assertEqual(mapping.get("Party Account No."), 1)
+		self.assertEqual(mapping.get("Party Name/Account Holder"), 2)
+
+	def test_transaction_type_column_is_detected(self):
+		"""A Transaction Type header is its own target, not an alias of Debit/Credit."""
+		mapping = self._detected_mapping(["Date", "Transaction Type", "Amount", "Cr/Dr"])
+		self.assertEqual(mapping.get("Transaction Type"), 1)
+		self.assertEqual(mapping.get("Debit/Credit"), 3)
+
+	def test_fee_columns_are_detected(self):
+		mapping = self._detected_mapping(["Date", "Amount", "Included Fee", "Excluded Fee"])
+		self.assertEqual(mapping.get("Included Fee"), 2)
+		self.assertEqual(mapping.get("Excluded Fee"), 3)
+
+	def test_party_columns_do_not_shadow_standard_columns(self):
+		"""Adding party aliases must not steal columns from the existing variables."""
+		mapping = self._detected_mapping(
+			["Transaction Date", "Narration", "Cheque No.", "Debit", "Credit", "Balance"]
+		)
+		self.assertEqual(
+			mapping,
+			{
+				"Date": 0,
+				"Description": 1,
+				"Reference": 2,
+				"Withdrawal": 3,
+				"Deposit": 4,
+				"Balance": 5,
+			},
+		)
 
 	def test_pdf_password_protected(self):
 		"""Encrypted PDFs error without a password and succeed with the right one."""
