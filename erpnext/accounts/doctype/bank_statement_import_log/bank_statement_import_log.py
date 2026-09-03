@@ -591,7 +591,6 @@ HEADER_KEYWORDS = [
 STANDARD_VARIABLES = {
 	"Date": ["date", "transaction date"],
 	"Debit/Credit": [
-		"transaction type",
 		"cr/dr",
 		"dr/cr",
 		"debit/credit",
@@ -605,6 +604,7 @@ STANDARD_VARIABLES = {
 	"Description": ["description", "particulars", "remarks", "narration", "detail", "reference"],
 	"Reference": ["reference", "ref", "tran id", "transaction id", "cheque", "check", "id", "chq"],
 	"Balance": ["balance"],
+	"Transaction Type": ["transaction type"],
 	"Included Fee": ["included fee", "fee included"],
 	"Excluded Fee": ["excluded fee", "fee excluded"],
 	# The party variants are matched before the generic name, so that a header like

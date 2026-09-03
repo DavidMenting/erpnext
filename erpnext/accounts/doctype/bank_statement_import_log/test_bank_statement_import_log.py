@@ -257,6 +257,12 @@ class TestBankStatementImportLog(ERPNextTestSuite, AccountsTestMixin):
 		self.assertEqual(mapping.get("Party Account No."), 1)
 		self.assertEqual(mapping.get("Party Name/Account Holder"), 2)
 
+	def test_transaction_type_column_is_detected(self):
+		"""A Transaction Type header is its own target, not an alias of Debit/Credit."""
+		mapping = self._detected_mapping(["Date", "Transaction Type", "Amount", "Cr/Dr"])
+		self.assertEqual(mapping.get("Transaction Type"), 1)
+		self.assertEqual(mapping.get("Debit/Credit"), 3)
+
 	def test_fee_columns_are_detected(self):
 		mapping = self._detected_mapping(["Date", "Amount", "Included Fee", "Excluded Fee"])
 		self.assertEqual(mapping.get("Included Fee"), 2)
